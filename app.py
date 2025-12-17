@@ -15,7 +15,7 @@ try:
     smtp_server = st.secrets["SMTP_SERVER"]
     smtp_port = st.secrets["SMTP_PORT"]
 except:
-    # Fallback für lokal
+    # Fallback
     api_key = os.environ.get("GOOGLE_API_KEY")
 
 if not api_key:
@@ -24,18 +24,16 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
-# --- 2. E-MAIL FUNKTION (Yahoo & Co) ---
+# --- 2. E-MAIL FUNKTION ---
 def send_email(chat_history):
     msg = MIMEMultipart()
     msg['From'] = email_sender
     msg['To'] = email_receiver
     msg['Subject'] = "🚨 Neuer Unfall-Lead (via Lea Bot)"
 
-    # Chatverlauf formatieren
     body = "Hallo Herr Rump,\n\nhier ist ein neuer Lead von Lea:\n\n"
     for message in chat_history:
         role = "KUNDE" if message["role"] == "user" else "LEA"
-        # Entferne den geheimen Mail-Code aus dem Text für die Mail
         clean_content = message['content'].replace("[MAIL_SENDEN]", "")
         body += f"{role}: {clean_content}\n\n"
     
@@ -50,8 +48,7 @@ def send_email(chat_history):
         server.quit()
         return True
     except Exception as e:
-        print(f"Mail-Fehler: {e}")
-        st.error(f"Fehler beim Senden der Mail: {e}") # Zeigt Fehler direkt in der App an
+        st.error(f"Fehler beim Mail-Versand: {e}")
         return False
 
 # --- 3. SYSTEM PROMPT ---
@@ -67,21 +64,21 @@ Diesen Code sieht der Kunde nicht, aber er löst den Versand an Herrn Rump aus.
 Beispiel Ende: "Danke Herr Müller, ich habe alles notiert. Herr Rump ruft Sie morgen früh an. [MAIL_SENDEN]"
 """
 
-# --- 4. MODELL STARTEN (KORRIGIERT: Gemini 2.5 Flash) ---
+# --- 4. MODELL STARTEN (ÄNDERUNG: 1.5 Flash für höhere Limits) ---
 try:
-    # Hier nutzen wir jetzt exakt das Modell, das du wolltest
+    # Wir nutzen 1.5 Flash, weil du hier 1500 Anfragen frei hast (statt 20 bei 2.5)
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash", 
+        model_name="gemini-1.5-flash", 
         system_instruction=system_instruction
     )
 except Exception as e:
-    st.error(f"Kritischer Fehler beim Laden von Gemini 2.5 Flash: {e}")
+    st.error(f"Fehler beim Laden des Modells: {e}")
     st.stop()
 
 # --- 5. UI & LOGIK ---
 st.set_page_config(page_title="Rump Unfall-Hilfe", page_icon="🚗")
 st.title("🚗 Unfall-Notdienst Rump")
-st.caption("Ich bin Lea. Wie kann ich Ihnen helfen? (Powered by Gemini 2.5)")
+st.caption("Ich bin Lea. Wie kann ich Ihnen helfen?")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -89,15 +86,12 @@ if "messages" not in st.session_state:
     st.session_state.chat_session = model.start_chat(history=[])
     st.session_state.mail_sent = False 
 
-# Verlauf anzeigen
 for msg in st.session_state.messages:
-    # Code ausblenden
     content_display = msg["content"].replace("[MAIL_SENDEN]", "")
     role = "user" if msg["role"] == "user" else "assistant"
     with st.chat_message(role):
         st.write(content_display)
 
-# Eingabe
 if prompt := st.chat_input("Ihre Antwort..."):
     with st.chat_message("user"):
         st.write(prompt)
@@ -108,7 +102,6 @@ if prompt := st.chat_input("Ihre Antwort..."):
             response = st.session_state.chat_session.send_message(prompt)
             full_response = response.text
             
-            # Prüfen auf Mail-Trigger
             if "[MAIL_SENDEN]" in full_response and not st.session_state.mail_sent:
                 with st.spinner("Sende Daten an Herrn Rump..."):
                     success = send_email(st.session_state.messages + [{"role": "assistant", "content": full_response}])
@@ -116,10 +109,9 @@ if prompt := st.chat_input("Ihre Antwort..."):
                         st.toast("✅ Lead gesichert! Mail ist raus.", icon="📧")
                         st.session_state.mail_sent = True
             
-            # Code für Anzeige entfernen
             display_text = full_response.replace("[MAIL_SENDEN]", "")
             st.write(display_text)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             
         except Exception as e:
-            st.error(f"Fehler: {e}")
+            st.error(f"Limit erreicht oder Fehler: {e}")
