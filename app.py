@@ -1,96 +1,73 @@
 import streamlit as st
 import google.generativeai as genai
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
-# --- 1. KONFIGURATION ---
+# --- KONFIGURATION ---
+# Versuche den Key aus den Streamlit Secrets zu laden
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
-    # E-Mail Secrets laden
-    email_sender = st.secrets["EMAIL_SENDER"]
-    email_password = st.secrets["EMAIL_PASSWORD"]
-    email_receiver = st.secrets["EMAIL_RECEIVER"]
-    smtp_server = st.secrets["SMTP_SERVER"]
-    smtp_port = st.secrets["SMTP_PORT"]
 except:
-    # Fallback für lokal
+    # Fallback für lokale Tests (falls Umgebungsvariable gesetzt)
     api_key = os.environ.get("GOOGLE_API_KEY")
 
 if not api_key:
-    st.error("❌ API Key fehlt! Bitte Secrets prüfen.")
+    st.error("❌ Kein API Key gefunden! Bitte in Streamlit Cloud unter 'Secrets' eintragen.")
     st.stop()
 
 genai.configure(api_key=api_key)
 
-# --- 2. E-MAIL FUNKTION ---
-def send_email(chat_history):
-    msg = MIMEMultipart()
-    msg['From'] = email_sender
-    msg['To'] = email_receiver
-    msg['Subject'] = "🚨 Neuer Unfall-Lead (via Lea Bot)"
-
-    # Chatverlauf schön formatieren
-    body = "Hallo Herr Rump,\n\nhier ist ein neuer Lead von Lea:\n\n"
-    for message in chat_history:
-        role = "KUNDE" if message["role"] == "user" else "LEA"
-        body += f"{role}: {message['content']}\n\n"
-    
-    msg.attach(MIMEText(body, 'plain'))
-
-    try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(email_sender, email_password)
-        text = msg.as_string()
-        server.sendmail(email_sender, email_receiver, text)
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"Mail-Fehler: {e}")
-        return False
-
-# --- 3. SYSTEM PROMPT ---
+# --- SYSTEM PROMPT ---
 system_instruction = """
-Du bist 'Lea', die Assistentin des Kfz-Sachverständigenbüros Rump.
-Deine Aufgabe: Daten aufnehmen (Name, Telefon, Auto, Schaden, Ort).
-Sei kurz, empathisch und professionell.
+Du bist 'Lea', die virtuelle Assistentin des Kfz-Sachverständigenbüros Rump.
+Deine Aufgabe: Unfallgeschädigte beruhigen und Daten aufnehmen.
+Sei empathisch, kurz und professionell.
 
-WICHTIG: 
-Sobald du Name und Telefonnummer des Kunden hast, füge am Ende deiner Antwort unauffällig diesen Code hinzu: [MAIL_SENDEN]
-Diesen Code sieht der Kunde nicht, aber er löst den Versand an Herrn Rump aus.
+Führe den Nutzer Schritt für Schritt durch diese Punkte:
+1. Name
+2. Rückrufnummer
+3. Fahrzeugmodell & Marke
+4. Standort des Fahrzeugs
+5. Art des Schadens (kurz)
+6. Ist das Fahrzeug noch fahrbereit?
 
-Beispiel Ende: "Danke Herr Müller, ich habe alles notiert. Herr Rump ruft Sie morgen früh an. [MAIL_SENDEN]"
+WICHTIG:
+- Gib KEINE Rechtsberatung.
+- Nenne KEINE Preise.
+- Sobald du Name und Telefonnummer hast, gilt der Lead als gesichert.
+- Am Ende: Bedanke dich und sage, dass Herr Rump sich ab 8:00 Uhr meldet.
 """
 
-# --- 4. MODELL ---
+# --- MODELL STARTEN ---
+# Wir nutzen Gemini 2.5 Flash wie gewünscht.
+# Falls der Name in der API leicht anders ist, springt er auf 1.5 zurück, damit die App nicht abstürzt.
 try:
-    model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system_instruction)
-except:
-    model = genai.GenerativeModel("gemini-pro", system_instruction=system_instruction)
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash", 
+        system_instruction=system_instruction
+    )
+except Exception as e:
+    # Fallback, falls 2.5 noch Experimental-Status hat
+    print(f"Switching to fallback model due to: {e}")
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=system_instruction
+    )
 
-# --- 5. UI & LOGIK ---
+# --- UI LAYOUT ---
 st.set_page_config(page_title="Rump Unfall-Hilfe", page_icon="🚗")
 st.title("🚗 Unfall-Notdienst Rump")
 st.caption("Ich bin Lea. Wie kann ich Ihnen helfen?")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    st.session_state.messages.append({"role": "assistant", "content": "Hallo! Hier ist der Notdienst vom Büro Rump. Hatten Sie einen Unfall?"})
+    st.session_state.messages.append({"role": "assistant", "content": "Hallo! Hier ist der digitale Notdienst vom Büro Rump. Hatten Sie einen Unfall?"})
     st.session_state.chat_session = model.start_chat(history=[])
-    st.session_state.mail_sent = False # Merken, ob wir schon gesendet haben
 
-# Verlauf anzeigen
 for msg in st.session_state.messages:
-    # Den geheimen Code wollen wir im Chat nicht anzeigen
-    content_display = msg["content"].replace("[MAIL_SENDEN]", "")
-    
     role = "user" if msg["role"] == "user" else "assistant"
     with st.chat_message(role):
-        st.write(content_display)
+        st.write(msg["content"])
 
-# Eingabe
 if prompt := st.chat_input("Ihre Antwort..."):
     with st.chat_message("user"):
         st.write(prompt)
@@ -98,21 +75,11 @@ if prompt := st.chat_input("Ihre Antwort..."):
     
     with st.chat_message("assistant"):
         try:
-            response = st.session_state.chat_session.send_message(prompt)
-            full_response = response.text
-            
-            # Prüfen auf geheimen Code
-            if "[MAIL_SENDEN]" in full_response and not st.session_state.mail_sent:
-                success = send_email(st.session_state.messages + [{"role": "assistant", "content": full_response}])
-                if success:
-                    st.toast("✅ Daten wurden an Herrn Rump gesendet!", icon="📧")
-                    st.session_state.mail_sent = True
-            
-            # Code für Anzeige entfernen
-            display_text = full_response.replace("[MAIL_SENDEN]", "")
-            st.write(display_text)
-            
+            response = st.session_state.chat_session.send_message(prompt, stream=True)
+            def stream_parser(stream):
+                for chunk in stream:
+                    yield chunk.text
+            full_response = st.write_stream(stream_parser(response))
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
         except Exception as e:
-            st.error(f"Fehler: {e}")
+            st.error(f"Ein Fehler ist aufgetreten: {e}")
