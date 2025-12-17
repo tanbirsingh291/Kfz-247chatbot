@@ -64,15 +64,35 @@ Diesen Code sieht der Kunde nicht, aber er löst den Versand an Herrn Rump aus.
 Beispiel Ende: "Danke Herr Müller, ich habe alles notiert. Herr Rump ruft Sie morgen früh an. [MAIL_SENDEN]"
 """
 
-# --- 4. MODELL STARTEN (ÄNDERUNG: 1.5 Flash für höhere Limits) ---
-try:
-    # Wir nutzen 1.5 Flash, weil du hier 1500 Anfragen frei hast (statt 20 bei 2.5)
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash", 
-        system_instruction=system_instruction
-    )
-except Exception as e:
-    st.error(f"Fehler beim Laden des Modells: {e}")
+# --- 4. MODELL STARTEN (Die "Panzer-Logik") ---
+# Wir probieren eine Liste von Namen durch, bis einer klappt.
+possible_models = [
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-001",
+    "gemini-1.5-flash-latest",
+    "gemini-pro",
+    "gemini-1.0-pro"
+]
+
+model = None
+last_error = ""
+
+for model_name in possible_models:
+    try:
+        # Wir testen, ob wir das Modell laden können
+        model = genai.GenerativeModel(
+            model_name=model_name, 
+            system_instruction=system_instruction
+        )
+        # Wenn wir hier ankommen, hat es geklappt!
+        # st.toast(f"Verbunden mit: {model_name}") # Optional: Zeigt an, welches Modell läuft
+        break 
+    except Exception as e:
+        last_error = e
+        continue
+
+if model is None:
+    st.error(f"Konnte kein KI-Modell starten. Letzter Fehler: {last_error}")
     st.stop()
 
 # --- 5. UI & LOGIK ---
@@ -114,4 +134,4 @@ if prompt := st.chat_input("Ihre Antwort..."):
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             
         except Exception as e:
-            st.error(f"Limit erreicht oder Fehler: {e}")
+            st.error(f"Fehler: {e}")
