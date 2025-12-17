@@ -15,7 +15,7 @@ try:
     smtp_server = st.secrets["SMTP_SERVER"]
     smtp_port = st.secrets["SMTP_PORT"]
 except:
-    # Fallback
+    # Fallback für lokal
     api_key = os.environ.get("GOOGLE_API_KEY")
 
 if not api_key:
@@ -64,74 +64,42 @@ Diesen Code sieht der Kunde nicht, aber er löst den Versand an Herrn Rump aus.
 Beispiel Ende: "Danke Herr Müller, ich habe alles notiert. Herr Rump ruft Sie morgen früh an. [MAIL_SENDEN]"
 """
 
-# --- 4. MODELL STARTEN (Die "Panzer-Logik") ---
-# Wir probieren eine Liste von Namen durch, bis einer klappt.
-possible_models = [
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-001",
-    "gemini-1.5-flash-latest",
-    "gemini-pro",
-    "gemini-1.0-pro"
+# --- 4. MODELL STARTEN (Priorität: Gemini 2.5) ---
+model = None
+active_model_name = ""
+
+# Liste der Modelle: Zuerst das gewünschte 2.5, dann Fallbacks
+priority_list = [
+    "gemini-2.5-flash",        # Wunsch-Modell
+    "gemini-2.0-flash-exp",    # Alternative Bezeichnung
+    "gemini-1.5-flash",        # Solider Fallback
+    "gemini-pro"               # Letzte Rettung
 ]
 
-model = None
-last_error = ""
-
-for model_name in possible_models:
+for model_name in priority_list:
     try:
-        # Wir testen, ob wir das Modell laden können
-        model = genai.GenerativeModel(
+        # Versuch, das Modell zu laden
+        test_model = genai.GenerativeModel(
             model_name=model_name, 
             system_instruction=system_instruction
         )
-        # Wenn wir hier ankommen, hat es geklappt!
-        # st.toast(f"Verbunden mit: {model_name}") # Optional: Zeigt an, welches Modell läuft
-        break 
-    except Exception as e:
-        last_error = e
+        # Wenn kein Fehler kommt, nehmen wir es!
+        model = test_model
+        active_model_name = model_name
+        break
+    except:
         continue
 
 if model is None:
-    st.error(f"Konnte kein KI-Modell starten. Letzter Fehler: {last_error}")
+    st.error("Kritischer Fehler: Konnte kein KI-Modell verbinden.")
     st.stop()
 
 # --- 5. UI & LOGIK ---
 st.set_page_config(page_title="Rump Unfall-Hilfe", page_icon="🚗")
 st.title("🚗 Unfall-Notdienst Rump")
-st.caption("Ich bin Lea. Wie kann ich Ihnen helfen?")
+# Zeigt klein an, welches Gehirn gerade läuft
+st.caption(f"Ich bin Lea. (Powered by {active_model_name})")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    st.session_state.messages.append({"role": "assistant", "content": "Hallo! Hier ist der digitale Notdienst vom Büro Rump. Hatten Sie einen Unfall?"})
-    st.session_state.chat_session = model.start_chat(history=[])
-    st.session_state.mail_sent = False 
-
-for msg in st.session_state.messages:
-    content_display = msg["content"].replace("[MAIL_SENDEN]", "")
-    role = "user" if msg["role"] == "user" else "assistant"
-    with st.chat_message(role):
-        st.write(content_display)
-
-if prompt := st.chat_input("Ihre Antwort..."):
-    with st.chat_message("user"):
-        st.write(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    with st.chat_message("assistant"):
-        try:
-            response = st.session_state.chat_session.send_message(prompt)
-            full_response = response.text
-            
-            if "[MAIL_SENDEN]" in full_response and not st.session_state.mail_sent:
-                with st.spinner("Sende Daten an Herrn Rump..."):
-                    success = send_email(st.session_state.messages + [{"role": "assistant", "content": full_response}])
-                    if success:
-                        st.toast("✅ Lead gesichert! Mail ist raus.", icon="📧")
-                        st.session_state.mail_sent = True
-            
-            display_text = full_response.replace("[MAIL_SENDEN]", "")
-            st.write(display_text)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
-        except Exception as e:
-            st.error(f"Fehler: {e}")
+    st.session_state.messages.append({"role":
